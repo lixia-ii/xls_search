@@ -1,0 +1,7 @@
+# Python runtime and local tools
+py/cache/
+__pycache__/
+py/gui_settings.json
+py/keywords.txt
+py/sources.txt
+.idea/
