@@ -35,10 +35,6 @@ def ensure_utf8_stdout():
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))      # .../py/code/xls_search
-CODE_DIR   = os.path.dirname(SCRIPT_DIR)                     # .../py/code
-DATA_DIR   = os.path.dirname(CODE_DIR)                       # .../py
-
 
 def get_index_path(xls_dir):
     """不同 xls 目录各自一份索引：md5(目录路径)[:8] 作为缓存子目录名。"""
@@ -53,6 +49,22 @@ def col_letter(n):
         n, rem = divmod(n - 1, 26)
         result = chr(65 + rem) + result
     return result
+
+
+def col_name_to_num(s):
+    """列字母 -> 列号（A->1, Z->26, AA->27, XFD->16384）。
+    纯数字字符串原样转 int。非法输入返回 None。
+    """
+    s = s.strip().upper()
+    if s.isdigit():
+        n = int(s)
+        return n if 1 <= n <= 16384 else None
+    if not s or not s.isalpha() or not s.isascii() or len(s) > 3:
+        return None
+    n = 0
+    for ch in s:
+        n = n * 26 + (ord(ch) - 64)
+    return n if 1 <= n <= 16384 else None
 
 
 def collect_files(xls_dir):

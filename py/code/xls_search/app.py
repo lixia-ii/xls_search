@@ -17,7 +17,7 @@ from tkinter import ttk, filedialog, messagebox
 import xls_search.excel_actions as excel_actions
 import xls_search.ime as ime
 import xls_search.search_excel as search_excel
-from xls_search.paths import col_letter
+from xls_search.paths import col_letter, col_name_to_num
 from xls_search.storage import (load_settings, save_settings,
                                 load_keywords, save_keyword,
                                 load_sources, save_sources)
@@ -40,6 +40,8 @@ class App:
         self.settings = load_settings() # 记忆的偏好（模式等）
         self._hl_keyword = ""           # 当前用于高亮的关键字
         self.cancel_event = threading.Event()   # 置位表示请求取消当前后台任务
+        self._index_dirty = False       # sync probe 检测到索引过期
+        self._stale_dismissed = False   # 本次会话用户已选「否跳过」，不再弹提示
 
         self._controller = SearchController(self.q, self.cancel_event)
 
@@ -248,6 +250,9 @@ class App:
     def _save_dir_history(self, d):
         """异步写盘 + 立即更新内存下拉列表（不重读文件，避免异步写盘竞态）。"""
         threading.Thread(target=lambda: save_sources([d]), daemon=True).start()
+        # 切换到新目录，重置索引脏状态和弹窗抑制标志
+        self._index_dirty = False
+        self._stale_dismissed = False
         # 立即更新下拉列表：最新的放最上面
         vals = list(self.dir_combo["values"])
         vals = [v for v in vals if v != d]   # 去重
@@ -316,15 +321,8 @@ class App:
         mode = self.mode_var.get()
         exact = self.exact_var.get()
         filter_str = self.filter_var.get().strip() or None
-        col_txt = self.col_var.get().strip().upper()
-        if col_txt.isdigit():
-            col_filter = int(col_txt)
-        elif len(col_txt) == 1 and 'A' <= col_txt <= 'Z':
-            col_filter = ord(col_txt) - 64
-        elif len(col_txt) == 2 and col_txt.isalpha() and col_txt.isascii():
-            col_filter = (ord(col_txt[0]) - 64) * 26 + (ord(col_txt[1]) - 64)
-        else:
-            col_filter = None
+        col_txt = self.col_var.get().strip()
+        col_filter = col_name_to_num(col_txt) if col_txt else None
 
         # 异步写盘；UI 侧直接推入内存，不等待磁盘 I/O
         threading.Thread(target=lambda: save_keyword(keyword), daemon=True).start()
@@ -339,6 +337,18 @@ class App:
                 mode = "3"
             else:
                 return
+
+        # 模式2 且索引有更新（定时器检测到）-> 询问是否先更新
+        if mode == "2" and self._index_dirty and not self._stale_dismissed:
+            ans = messagebox.askyesno(
+                "索引已过期",
+                "检测到文件有变动，索引可能不完整。\n"
+                "是否先更新索引再搜索？\n\n"
+                "（选「否」本次不再提示，下次启动程序后恢复提醒）")
+            if ans:
+                mode = "3"      # 更新变动索引再搜索
+            else:
+                self._stale_dismissed = True    # 本次会话不再弹
 
         self._hl_keyword = keyword      # 供结果渲染时高亮命中字
         self.cancel_event.clear()
@@ -396,6 +406,9 @@ class App:
                     self.status_var.set(payload)
                 elif kind == "mode":
                     self.mode_var.set(payload)
+                    # 索引刚建完（或重建完），脏状态清零
+                    self._index_dirty = False
+                    self._stale_dismissed = False
                 elif kind == "results":
                     self._show_results(payload)
                 elif kind == "error":
@@ -405,6 +418,8 @@ class App:
                     self.status_var.set(payload or "已取消")
                 elif kind == "sync":
                     self.sync_var.set(payload)
+                    # probe 有结果时同步维护脏标志（payload 非空 = 有变动）
+                    self._index_dirty = bool(payload)
                 elif kind == "done":
                     self._set_busy(False)
         except queue.Empty:

@@ -60,20 +60,21 @@ def _ping():
 
 
 def _make_process_pool(items_count):
-    """尝试建一个可用的进程池并预热探测；不可用（如 pythonw 下起不来）返回 None。"""
+    """尝试建一个可用的进程池并预热探测；不可用（如 pythonw 下起不来）返回 (None, 0)。
+    返回 (pool, workers)。"""
     workers = min(os.cpu_count() or 4, 8)
     if workers < 2 or items_count < 4:
-        return None
+        return None, 0
     try:
         pool = _cf.ProcessPoolExecutor(max_workers=workers)
         pool.submit(_ping).result(timeout=5)   # 确认子进程能起来
-        return pool
+        return pool, workers
     except Exception:
         try:
             pool.shutdown(wait=False)
         except Exception:
             pass
-        return None
+        return None, 0
 
 
 def _make_status(on_status, prefix=""):
@@ -110,13 +111,13 @@ def _iter_parsed(items, progress, on_status=None):
         yield from _sequential()
         return
 
-    pool = _make_process_pool(total)
+    pool, workers = _make_process_pool(total)
     if pool is None:
         _status("单进程模式（进程池不可用）")
         yield from _sequential()
         return
 
-    _status(f"多进程模式 x{pool._max_workers}")
+    _status(f"多进程模式 x{workers}")
     futures = [pool.submit(_parse_job, rel, path) for rel, path in items]
     try:
         for i, fut in enumerate(_cf.as_completed(futures), 1):
