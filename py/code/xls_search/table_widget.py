@@ -113,8 +113,8 @@ class ResultTable:
             for i in range(len(self.col_spec) - 1):
                 frame.columnconfigure(i * 2 + 1, weight=0, minsize=self._sep_w)
 
-        # 表头（固定）
-        self.head_frame = ttk.Frame(parent)
+        # 表头（固定）—— 用 tk.Frame 与 rows_frame 保持一致，避免 ttk 主题 padding 造成列错位
+        self.head_frame = tk.Frame(parent, bd=0, highlightthickness=0)
         self.head_frame.grid(row=0, column=0, sticky="we")
         _config_cols(self.head_frame)
         self._head_labels = []
@@ -149,7 +149,8 @@ class ResultTable:
         # 但只当鼠标在 canvas 区域内才滚动，不影响输入框等其他区域
         self._rows_canvas.bind_all("<MouseWheel>", self._on_wheel_global)
 
-        self.rows_frame = tk.Frame(self._rows_canvas, bg=self._bg_even)
+        self.rows_frame = tk.Frame(self._rows_canvas, bg=self._bg_even,
+                                   bd=0, highlightthickness=0)
         _config_cols(self.rows_frame)
         self._rows_window = self._rows_canvas.create_window(
             (0, 0), window=self.rows_frame, anchor="nw")
@@ -362,6 +363,31 @@ class ResultTable:
         # 异步补齐高亮，避免首次渲染卡顿
         self._apply_hl_async()
 
+    def _bind_row_events(self, c, ci, global_idx, file, val, texts, col_w):
+        """为单个单元格控件绑定行交互事件（Button-1/Double-1/Button-3/Enter/Leave）。"""
+        for seq in ("<Button-1>", "<Double-1>", "<Button-3>", "<Enter>", "<Leave>"):
+            c.unbind(seq)
+
+        c.bind("<Button-1>", lambda e, gi=global_idx: self._select_row(gi))
+        c.bind("<Button-3>", lambda e, gi=global_idx: self._on_right_click(e, gi))
+
+        if ci == self._value_ci:
+            c.bind("<Double-1>", lambda e, gi=global_idx: self._on_dbl_value(gi))
+            tip_val = val if len(val) <= 300 else val[:300] + "......"
+            c.bind("<Enter>", lambda e, t="— 双击显示全部 —", h=tip_val: self._show_tooltip(e, t, header=h))
+            c.bind("<Leave>", lambda e: self._hide_tooltip())
+        elif ci == 1:
+            c.bind("<Double-1>", lambda e, gi=global_idx: self._on_dbl_file(gi))
+            c.bind("<Enter>", lambda e, t="— 双击打开文件 —", h=file: self._show_tooltip(e, t, header=h))
+            c.bind("<Leave>", lambda e: self._hide_tooltip())
+        else:
+            c.bind("<Double-1>", lambda e, gi=global_idx: self._on_dbl(gi))
+            if col_w is not None:
+                displayed = self._fit_col_text(texts[ci], col_w, middle=False)
+                if displayed != texts[ci]:
+                    c.bind("<Enter>", lambda e, t=texts[ci]: self._show_tooltip(e, t))
+                    c.bind("<Leave>", lambda e: self._hide_tooltip())
+
     def _update_row(self, page_row, global_idx):
         """更新已有行的文本、样式、事件绑定（不销毁重建）。"""
         file, sheet, row, col, val = self.all_rows[global_idx]
@@ -375,10 +401,6 @@ class ResultTable:
 
         for ci, (key, _, w, anchor) in enumerate(self.col_spec):
             c = cells[ci]
-            # 先解绑旧事件（global_idx 已变，lambda 闭包里的旧值会指错行）
-            for seq in ("<Button-1>", "<Double-1>", "<Button-3>", "<Enter>", "<Leave>"):
-                c.unbind(seq)
-
             if isinstance(c, tk.Text):
                 c.configure(state="normal", bg=bg, fg=fg)
                 c.delete("1.0", "end")
@@ -389,31 +411,7 @@ class ResultTable:
                 c.configure(text=self._fit_col_text(texts[ci], w, middle=(ci == 1)),
                             bg=bg, fg=fg)
 
-            # 重新绑定事件（lambda 默认参数捕获新的 global_idx）
-            c.bind("<Button-1>", lambda e, gi=global_idx: self._select_row(gi))
-            if ci == self._value_ci:
-                c.bind("<Double-1>",
-                       lambda e, gi=global_idx: self._on_dbl_value(gi))
-                # 值超过300则截断，让用户双击查看完整内容
-                tip_val = val if len(val) <= 300 else val[:300] + "......"
-                c.bind("<Enter>", lambda e, t="— 双击显示全部 —", h=tip_val: self._show_tooltip(e, t, header=h))
-                c.bind("<Leave>", lambda e: self._hide_tooltip())
-            elif ci == 1:
-                c.bind("<Double-1>",
-                       lambda e, gi=global_idx: self._on_dbl_file(gi))
-                c.bind("<Enter>", lambda e, t="— 双击打开文件 —", h=file: self._show_tooltip(e, t, header=h))
-                c.bind("<Leave>", lambda e: self._hide_tooltip())
-            else:
-                c.bind("<Double-1>",
-                       lambda e, gi=global_idx: self._on_dbl(gi))
-                # #/Sheet/行/列：只在被截断时显示完整内容
-                displayed = self._fit_col_text(texts[ci], w, middle=False)
-                if displayed != texts[ci]:
-                    c.bind("<Enter>", lambda e, t=texts[ci]: self._show_tooltip(e, t))
-                    c.bind("<Leave>", lambda e: self._hide_tooltip())
-
-            c.bind("<Button-3>",
-                   lambda e, gi=global_idx: self._on_right_click(e, gi))
+            self._bind_row_events(c, ci, global_idx, file, val, texts, w)
 
     def _make_row(self, page_row, global_idx):
         """创建一行控件（grid 在 rows_frame 的 page_row 行）。"""
@@ -441,31 +439,7 @@ class ResultTable:
                              bg=bg, fg=fg)
                 c.configure(text=self._fit_col_text(texts[ci], w, middle=(ci == 1)))
             c.grid(row=page_row, column=ci * 2, sticky="we")
-            # 绑定事件
-            c.bind("<Button-1>", lambda e, gi=global_idx: self._select_row(gi))
-            if ci == self._value_ci:
-                c.bind("<Double-1>",
-                       lambda e, gi=global_idx: self._on_dbl_value(gi))
-                # 值超过300则截断，让用户双击查看完整内容
-                tip_val = val if len(val) <= 300 else val[:300] + "......"
-                c.bind("<Enter>", lambda e, t="— 双击显示全部 —", h=tip_val: self._show_tooltip(e, t, header=h))
-                c.bind("<Leave>", lambda e: self._hide_tooltip())
-            elif ci == 1:   # 「文件」列
-                c.bind("<Double-1>",
-                       lambda e, gi=global_idx: self._on_dbl_file(gi))
-                c.bind("<Enter>", lambda e, t="— 双击打开文件 —", h=file: self._show_tooltip(e, t, header=h))
-                c.bind("<Leave>", lambda e: self._hide_tooltip())
-            else:
-                c.bind("<Double-1>",
-                       lambda e, gi=global_idx: self._on_dbl(gi))
-                # #/Sheet/行/列：只在被截断时显示完整内容
-                displayed = self._fit_col_text(texts[ci], w, middle=False)
-                if displayed != texts[ci]:
-                    c.bind("<Enter>", lambda e, t=texts[ci]: self._show_tooltip(e, t))
-                    c.bind("<Leave>", lambda e: self._hide_tooltip())
-
-            c.bind("<Button-3>",
-                   lambda e, gi=global_idx: self._on_right_click(e, gi))
+            self._bind_row_events(c, ci, global_idx, file, val, texts, w)
             cells.append(c)
 
         # 竖线分隔
@@ -499,10 +473,14 @@ class ResultTable:
         ell = "…"
         avail = max(0, inner - f.measure(ell))
         if not middle:
-            n = len(text)
-            while n > 0 and f.measure(text[:n]) > avail:
-                n -= 1
-            return text[:n] + ell
+            lo, hi = 0, len(text)
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                if f.measure(text[:mid]) <= avail:
+                    lo = mid
+                else:
+                    hi = mid - 1
+            return text[:lo] + ell
         # 中间省略：头尾对半分
         half = avail // 2
         h = 0
@@ -847,7 +825,11 @@ class ResultTable:
         if self._resizing is None:
             return
         j = self._resizing
-        new_w = max(self._min_col, self._drag_w0 + (event.x_root - self._drag_x0))
+        # 下限取 _min_col 与表头 Label 自然宽度的较大值：
+        # tkinter 列宽 = max(minsize, 控件 reqwidth)，若 minsize < header_reqwidth，
+        # head_frame 列会比 rows_frame 列宽，导致两帧错位。
+        hdr_min = self._head_labels[j].winfo_reqwidth()
+        new_w = max(self._min_col, hdr_min, self._drag_w0 + (event.x_root - self._drag_x0))
         self.col_spec[j][2] = new_w
         self.head_frame.columnconfigure(j * 2, minsize=new_w)
         self.rows_frame.columnconfigure(j * 2, minsize=new_w)

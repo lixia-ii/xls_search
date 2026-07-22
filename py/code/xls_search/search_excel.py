@@ -90,13 +90,12 @@ def search_index(xls_dir, keyword, exact=False, filter_str=None, col_filter=None
 
 def search_files(xls_dir, keyword, exact=False, filter_str=None, col_filter=None, progress=None):
     try:
-        import openpyxl
+        import openpyxl  # noqa: F401 — 仅作可用性检查
     except ImportError:
         print("missing: pip install openpyxl")
         sys.exit(1)
 
-    results  = []
-    kw_lower = keyword.lower()
+    from xls_search.build_index import _iter_parsed
 
     all_files = []
     for root, _, files in os.walk(xls_dir):
@@ -108,32 +107,27 @@ def search_files(xls_dir, keyword, exact=False, filter_str=None, col_filter=None
                 continue
             all_files.append(full)
 
-    total = len(all_files)
-    for i, full in enumerate(all_files, 1):
-        rel = os.path.relpath(full, xls_dir)
-        if progress:
-            progress(i, total, rel)
-        else:
-            print(f"\r  scanning [{i}/{total}] {rel[:50]:<50}", end="", flush=True)
-        file_hits = []
-        try:
-            wb = openpyxl.load_workbook(full, read_only=True, data_only=True)
-            for sheet in wb.worksheets:
-                for row_idx, row in enumerate(sheet.iter_rows(values_only=True), 1):
-                    for col_idx, cell in enumerate(row, 1):
-                        if col_filter and col_idx != col_filter:
-                            continue
-                        if cell is None:
-                            continue
-                        cell_str = str(cell)
-                        matched  = (cell_str == keyword) if exact else (kw_lower in cell_str.lower())
-                        if matched:
-                            file_hits.append((sheet.title, row_idx, col_idx, cell_str))
-            wb.close()
-        except Exception as e:
-            print(f"\n  {RED}skip {rel}: {e}{RESET}")
-            continue
+    items = [(os.path.relpath(p, xls_dir), p) for p in all_files]
+    total = len(items)
+    kw_lower = keyword.lower()
+    results = []
 
+    cli_prog = progress or (lambda i, t, rel:
+                            print(f"\r  scanning [{i}/{t}] {rel[:50]:<50}", end="", flush=True))
+
+    for rel, rows, _mt, _sz, _h, err in _iter_parsed(items, cli_prog, on_status=lambda _: None):
+        if err:
+            print(f"\n  {RED}skip {rel}: {err}{RESET}")
+            continue
+        if not rows:
+            continue
+        file_hits = []
+        for _file, sheet, row_idx, col_idx, cell_str in rows:
+            if col_filter and col_idx != col_filter:
+                continue
+            matched = (cell_str == keyword) if exact else (kw_lower in cell_str.lower())
+            if matched:
+                file_hits.append((sheet, row_idx, col_idx, cell_str))
         if file_hits:
             print(f"\r{BOLD}{GREEN}[{rel}]{RESET}" + " " * 20)
             for sheet, row, col, val in file_hits:
