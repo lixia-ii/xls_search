@@ -107,6 +107,9 @@ class SearchController:
                     xls_dir, keyword, exact=exact,
                     filter_str=filter_str, col_filter=col_filter,
                     progress=self._mkprog())
+            elif mode == "0":
+                self.q.put(("status", "正在搜索文件名…"))
+                rows = search_excel.search_filenames(xls_dir, keyword, exact=exact)
             else:  # mode == "2"
                 self.q.put(("status", "正在查询索引…"))
                 rows = search_excel.search_index(

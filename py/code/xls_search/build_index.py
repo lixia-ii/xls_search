@@ -113,9 +113,11 @@ def _iter_parsed(items, progress, on_status=None):
 
     pool, workers = _make_process_pool(total)
     if pool is None:
-        _status("单进程模式（进程池不可用）")
-        yield from _sequential()
-        return
+        # 进程池起不来时用线程池兜底（openpyxl 解析有 I/O，多线程仍比单线程快）
+        thread_workers = min(os.cpu_count() or 4, 8)
+        _status(f"多线程模式 x{thread_workers}（进程池不可用）")
+        pool = _cf.ThreadPoolExecutor(max_workers=thread_workers)
+        workers = thread_workers
 
     _status(f"多进程模式 x{workers}")
     futures = [pool.submit(_parse_job, rel, path) for rel, path in items]

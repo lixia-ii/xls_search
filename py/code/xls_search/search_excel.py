@@ -7,7 +7,7 @@ import sqlite3
 import warnings
 warnings.filterwarnings("ignore")
 
-from xls_search.paths import col_letter, ensure_utf8_stdout, get_index_path, run_module
+from xls_search.paths import col_letter, collect_files, ensure_utf8_stdout, get_index_path, run_module
 ensure_utf8_stdout()
 
 RESET  = "\033[0m"
@@ -86,6 +86,20 @@ def search_index(xls_dir, keyword, exact=False, filter_str=None, col_filter=None
         raise
     conn.close()
     return rows
+
+
+def search_filenames(xls_dir, keyword, exact=False):
+    """只在文件名（相对路径）里搜索关键字，不读取文件内容。
+    返回 [(rel, "", 0, 0, rel), ...]，格式与其它 search_* 保持一致。
+    """
+    files = []
+    kw_lower = keyword.lower()
+    for path in collect_files(xls_dir):
+        rel = os.path.relpath(path, xls_dir)
+        matched = (rel == keyword) if exact else (kw_lower in rel.lower())
+        if matched:
+            files.append((rel, "", 0, 0, rel))
+    return files
 
 
 def search_files(xls_dir, keyword, exact=False, filter_str=None, col_filter=None, progress=None):

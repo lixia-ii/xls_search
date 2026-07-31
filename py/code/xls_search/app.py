@@ -99,8 +99,8 @@ class App:
         ttk.Label(mode_frame, text="模式:").pack(side="left")
         saved_mode = self.settings.get("mode", "2")
         self.mode_var = tk.StringVar(
-            value=saved_mode if saved_mode in ("1", "2") else "2")
-        for val, text in [("1", "直接读取文件"), ("2", "查询索引")]:
+            value=saved_mode if saved_mode in ("0", "1", "2") else "2")
+        for val, text in [("0", "搜文件名"), ("1", "搜内容（逐文件）"), ("2", "搜内容（用索引）")]:
             ttk.Radiobutton(mode_frame, text=text, value=val,
                             variable=self.mode_var).pack(side="left", padx=6)
         self.mode_var.trace_add("write", lambda *a: self._save_mode())
@@ -456,8 +456,8 @@ class App:
             return
         _, sheet, row, col, _ = data
         sheet = sheet or None
-        row = row if isinstance(row, int) else None
-        col = col if isinstance(col, int) else None
+        row = row if isinstance(row, int) and row > 0 else None
+        col = col if isinstance(col, int) and col > 0 else None
         # COM 启动 Excel 可能较慢，放后台线程；失败则退回默认打开
         threading.Thread(
             target=self._open_in_excel,
@@ -571,9 +571,9 @@ class App:
             return
         sheet = getattr(win, "_val_sheet", None) or None
         row = getattr(win, "_val_row", None)
-        row = row if isinstance(row, int) else None
+        row = row if isinstance(row, int) and row > 0 else None
         col = getattr(win, "_val_col", None)
-        col = col if isinstance(col, int) else None
+        col = col if isinstance(col, int) and col > 0 else None
         threading.Thread(
             target=self._open_in_excel,
             args=(full, sheet, row, col, jump_cell),

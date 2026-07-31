@@ -392,8 +392,9 @@ class ResultTable:
         """更新已有行的文本、样式、事件绑定（不销毁重建）。"""
         file, sheet, row, col, val = self.all_rows[global_idx]
         val_disp = self._value_snippet(val, self._col_width(self._value_ci))
-        texts = [str(global_idx + 1), file, sheet, str(row),
-                 f"{col_letter(col)}({col})", val_disp]
+        row_str = str(row) if row else "-"
+        col_str = f"{col_letter(col)}({col})" if col else "-"
+        texts = [str(global_idx + 1), file, sheet, row_str, col_str, val_disp]
         bg, fg = self._row_style(global_idx)
 
         cells, _ = self._page_widgets[page_row]
@@ -417,8 +418,9 @@ class ResultTable:
         """创建一行控件（grid 在 rows_frame 的 page_row 行）。"""
         file, sheet, row, col, val = self.all_rows[global_idx]
         val_disp = self._value_snippet(val, self._col_width(self._value_ci))
-        texts = [str(global_idx + 1), file, sheet, str(row),
-                 f"{col_letter(col)}({col})", val_disp]
+        row_str = str(row) if row else "-"
+        col_str = f"{col_letter(col)}({col})" if col else "-"
+        texts = [str(global_idx + 1), file, sheet, row_str, col_str, val_disp]
         bg, fg = self._row_style(global_idx)
 
         cells = []

@@ -52,7 +52,11 @@ def open_in_excel(full, sheet, row, col, jump_cell=False, on_status=None):
         # 把 Excel 主窗口切到前台，选中行才显示成醒目的激活态（不改窗口大小/位置）
         try:
             import win32gui
+            import win32con
             hwnd = int(excel.Hwnd)
+            # 若窗口被最小化，先恢复再切前台；否则 SetForegroundWindow 无效
+            if win32gui.IsIconic(hwnd):
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
             win32gui.SetForegroundWindow(hwnd)
         except Exception:
             try:
