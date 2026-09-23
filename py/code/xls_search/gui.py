@@ -23,6 +23,7 @@ if sys.stderr is None:
 
 import tkinter as tk
 
+from xls_search import autostart
 from xls_search.app import App
 from xls_search.paths import ASSETS_DIR
 
@@ -81,6 +82,12 @@ def _set_window_icon(root, ico_path):
 
 
 def main():
+    # 程序目录可能被移动过，校正自启动项里记的旧路径
+    try:
+        autostart.sync()
+    except Exception:
+        pass
+
     enable_dpi_awareness()
     root = tk.Tk()
     _set_window_icon(root, os.path.join(ASSETS_DIR, "app.ico"))

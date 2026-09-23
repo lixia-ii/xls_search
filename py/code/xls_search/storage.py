@@ -9,6 +9,7 @@
 """
 import json
 import os
+import shutil
 
 from xls_search.paths import DATA_DIR
 
@@ -140,3 +141,36 @@ def save_sources(new_sources):
     with open(SOURCES_FILE, "w", encoding="utf-8") as f:
         for s in deduped:
             f.write(s + "\n")
+
+
+# ---------- 清除缓存/历史 ----------
+
+def clear_cache():
+    """清除索引缓存（cache/ 目录）+ 关键字历史 + 目录历史。
+
+    不清 gui_settings.json（模式、列宽、关闭行为等界面偏好保留）。
+    返回 (成功与否, 提示文本)。
+    """
+    removed, failed = [], []
+
+    cache_dir = os.path.join(DATA_DIR, "cache")
+    if os.path.isdir(cache_dir):
+        try:
+            shutil.rmtree(cache_dir)
+            removed.append("索引缓存")
+        except Exception as e:
+            failed.append("索引缓存(%s)" % e)
+
+    for path, label in ((KEYWORDS_FILE, "关键字历史"), (SOURCES_FILE, "目录历史")):
+        if os.path.exists(path):
+            try:
+                open(path, "w", encoding="utf-8").close()   # 清空但保留文件
+                removed.append(label)
+            except Exception as e:
+                failed.append("%s(%s)" % (label, e))
+
+    if failed:
+        return False, "清除失败: " + "、".join(failed)
+    if not removed:
+        return True, "没有需要清除的缓存"
+    return True, "已清除: " + "、".join(removed)

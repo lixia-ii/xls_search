@@ -25,6 +25,7 @@ from xls_search.storage import (load_settings, save_settings,
 from xls_search.close_dialog import CloseDialog
 from xls_search.keyword_popup import KeywordPopup
 from xls_search.search_controller import SearchController
+from xls_search.settings_dialog import SettingsDialog
 from xls_search.table_widget import ResultTable
 from xls_search.tray import TrayIcon
 
@@ -81,6 +82,9 @@ class App:
         self._build_table(pad, s)
         self._build_statusbar(pad)
 
+    def _open_settings(self):
+        SettingsDialog(self)
+
     # ---------- 工具栏 ----------
 
     def _build_toolbar(self, pad, kw_font, px, s):
@@ -97,6 +101,8 @@ class App:
         # 不影响 Combobox 下拉选择等内部处理）
         self.root.bind_all("<Button-1>", self._on_global_dir_click, add="+")
         ttk.Button(top, text="浏览…", command=self._browse).grid(row=0, column=2)
+        ttk.Button(top, text="设置", command=self._open_settings).grid(
+            row=0, column=3, padx=(8, 0))
         top.columnconfigure(1, weight=1)
 
         # 模式行
