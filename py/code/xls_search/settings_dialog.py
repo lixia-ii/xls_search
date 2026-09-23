@@ -3,6 +3,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+import xls_search.theme as theme
 from xls_search import autostart
 from xls_search.storage import clear_cache, save_settings
 
@@ -20,16 +21,17 @@ class SettingsDialog(tk.Toplevel):
         self.title("设置")
         self.resizable(False, False)
         self.transient(app.root)
+        self.configure(bg=theme.BG)
 
         scale = app.scale
         px = lambda n: int(round(n * scale))
         ui_font = app.ui_font
 
-        frame = ttk.Frame(self, padding=(px(20), px(18)))
+        frame = ttk.Frame(self, padding=(px(22), px(20), px(22), px(16)))
         frame.pack(fill=tk.BOTH, expand=True)
 
         # --- 关闭按钮行为（这里可以改回"每次询问"）---
-        ttk.Label(frame, text="点击关闭按钮时", font=ui_font).grid(
+        ttk.Label(frame, text="点击关闭按钮时", style="Field.TLabel").grid(
             row=0, column=0, sticky="w", pady=(0, px(6)))
 
         self._close_var = tk.StringVar(
@@ -37,7 +39,7 @@ class SettingsDialog(tk.Toplevel):
         close_cb = ttk.Combobox(frame, textvariable=self._close_var,
                                 values=[label for _, label in CLOSE_CHOICES],
                                 state="readonly", font=ui_font)
-        close_cb.grid(row=1, column=0, sticky="ew", pady=(0, px(14)))
+        close_cb.grid(row=1, column=0, sticky="ew", pady=(0, px(16)))
         close_cb.bind("<<ComboboxSelected>>", self._on_close_action_changed)
 
         # --- 开机自启动 ---
@@ -45,29 +47,27 @@ class SettingsDialog(tk.Toplevel):
         ttk.Checkbutton(frame, text="开机时自动启动",
                         variable=self._autostart_var,
                         command=self._on_autostart_toggled).grid(
-            row=2, column=0, sticky="w", pady=(0, px(18)))
+            row=2, column=0, sticky="w", pady=(0, px(16)))
 
-        ttk.Button(frame, text="清除缓存/历史",
+        app.theme.hline(frame).grid(row=3, column=0, sticky="ew",
+                                    pady=(0, px(16)))
+
+        ttk.Button(frame, text="清除缓存 / 历史",
                    command=self._clear_cache).grid(
-            row=3, column=0, sticky="w")
+            row=4, column=0, sticky="w")
 
         self._result_var = tk.StringVar(value="")
-        ttk.Label(frame, textvariable=self._result_var, font=ui_font,
-                 foreground="#666666", wraplength=px(320)).grid(
-            row=4, column=0, sticky="w", pady=(px(10), px(16)))
+        ttk.Label(frame, textvariable=self._result_var, style="Hint.TLabel",
+                  wraplength=px(320)).grid(
+            row=5, column=0, sticky="w", pady=(px(10), px(18)))
 
         ttk.Button(frame, text="关闭", command=self.destroy).grid(
-            row=5, column=0, sticky="e")
+            row=6, column=0, sticky="e")
 
         frame.columnconfigure(0, weight=1, minsize=px(300))
         self.bind("<Escape>", lambda e: self.destroy())
 
-        # Center over parent
-        self.update_idletasks()
-        x = app.root.winfo_x() + (app.root.winfo_width() - self.winfo_width()) // 2
-        y = app.root.winfo_y() + (app.root.winfo_height() - self.winfo_height()) // 2
-        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
-
+        theme.center_over(self, app.root)
         self.grab_set()   # 放在最后，避免抢焦点时窗口还没定位好
 
     def _on_close_action_changed(self, event=None):

@@ -21,6 +21,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk
 
+import xls_search.theme as theme
 from xls_search.paths import col_letter
 
 
@@ -57,8 +58,8 @@ class ResultTable:
         self._sep_w = 1
         self._min_col = int(round(40 * s))
 
-        self._bg_even, self._bg_odd = "#ffffff", "#f3f6f9"
-        self._bg_sel, self._fg_sel = "#3399ff", "#ffffff"
+        self._bg_even, self._bg_odd = theme.ROW_EVEN, theme.ROW_ODD
+        self._bg_sel, self._fg_sel = theme.SEL_BG, theme.SEL_FG
 
         self.all_rows = []
         self.sel_index = None
@@ -113,15 +114,32 @@ class ResultTable:
             for i in range(len(self.col_spec) - 1):
                 frame.columnconfigure(i * 2 + 1, weight=0, minsize=self._sep_w)
 
-        # 表头（固定）—— 用 tk.Frame 与 rows_frame 保持一致，避免 ttk 主题 padding 造成列错位
-        self.head_frame = tk.Frame(parent, bd=0, highlightthickness=0)
+        # 表头 + 行区域整体包一层 1px 边框，让表格成为视觉上的一个"面板"，
+        # 而不是几条浮在窗口底色上的横线
+        parent.rowconfigure(0, weight=1)
+        parent.columnconfigure(0, weight=1)
+        shell = tk.Frame(parent, bg=theme.BORDER, bd=0, highlightthickness=0)
+        shell.grid(row=0, column=0, sticky="nsew")
+        box = tk.Frame(shell, bg=theme.ROW_EVEN, bd=0, highlightthickness=0)
+        box.pack(fill="both", expand=True, padx=1, pady=1)
+        box.rowconfigure(2, weight=1)
+        box.columnconfigure(0, weight=1)
+
+        # 表头（固定）—— 用 tk.Frame 与 rows_frame 保持一致，避免 ttk 主题 padding 造成列错位。
+        # 滚动条那一列上方补一块同色，免得表头右端留个白缺口。
+        tk.Frame(box, bg=theme.HEAD_BG).grid(row=0, column=1, sticky="nsew")
+        self.head_frame = tk.Frame(box, bd=0, highlightthickness=0,
+                                   bg=theme.HEAD_BG)
         self.head_frame.grid(row=0, column=0, sticky="we")
         _config_cols(self.head_frame)
         self._head_labels = []
         self._tooltip = None
         for i, (key, title, w, anchor) in enumerate(self.col_spec):
+            # 表头对齐跟随列内容：文件/值列内容左对齐，表头也左对齐，
+            # 否则标题浮在正中、数据贴在左边，看着像两套表
             hl = tk.Label(self.head_frame, text=title, font=self._head_font,
-                          anchor="center", padx=6, pady=4, cursor="hand2")
+                          anchor=anchor, padx=6, pady=int(round(6 * s)),
+                          bg=theme.HEAD_BG, fg=theme.HEAD_FG, cursor="hand2")
             hl.grid(row=0, column=i * 2, sticky="we")
             hl.bind("<Motion>",          lambda e, idx=i: self._head_motion(e, idx))
             hl.bind("<Leave>",           lambda e, idx=i: self._head_leave(idx))
@@ -132,17 +150,19 @@ class ResultTable:
 
         # 表头竖线（1px）
         for i in range(len(self.col_spec) - 1):
-            tk.Frame(self.head_frame, bg="#c8c8c8", width=1).grid(
+            tk.Frame(self.head_frame, bg=theme.GRID_HEAD, width=1).grid(
                 row=0, column=i * 2 + 1, sticky="ns")
 
+        # 表头下方的分界线
+        tk.Frame(box, bg=theme.GRID_HEAD, height=1).grid(
+            row=1, column=0, columnspan=2, sticky="we")
+
         # 行区域：Canvas + 滚动条，内容超出时可滚动
-        self._rows_canvas = tk.Canvas(parent, highlightthickness=0, bg=self._bg_even)
-        vsb = ttk.Scrollbar(parent, orient="vertical", command=self._rows_canvas_yview)
+        self._rows_canvas = tk.Canvas(box, highlightthickness=0, bg=self._bg_even)
+        vsb = ttk.Scrollbar(box, orient="vertical", command=self._rows_canvas_yview)
         self._rows_canvas.configure(yscrollcommand=vsb.set)
-        self._rows_canvas.grid(row=1, column=0, sticky="nsew")
-        vsb.grid(row=1, column=1, sticky="ns")
-        parent.rowconfigure(1, weight=1)
-        parent.columnconfigure(0, weight=1)
+        self._rows_canvas.grid(row=2, column=0, sticky="nsew")
+        vsb.grid(row=2, column=1, sticky="ns")
         self._rows_canvas.bind("<Configure>", self._on_rows_canvas_configure)
         self._rows_canvas.bind("<MouseWheel>", self._on_wheel_canvas)
         # 行控件填充了 canvas，滚轮事件会被子控件拦截，因此 bind_all 兜底；
@@ -155,54 +175,59 @@ class ResultTable:
         self._rows_window = self._rows_canvas.create_window(
             (0, 0), window=self.rows_frame, anchor="nw")
 
+        # 空状态：没有结果时在表格区正中显示一行灰字，免得是一大片空白
+        self._empty_lbl = tk.Label(self._rows_canvas, text="", bg=self._bg_even,
+                                   fg=theme.TEXT_MUTED, font=self._ui_font,
+                                   justify="center")
+        self._empty_text = "输入关键字后点「搜索」"
+
         # 底部翻页栏
+        pad = int(round(6 * s))
         nav = ttk.Frame(parent)
-        nav.grid(row=2, column=0, sticky="ew", pady=(2, 0))
-        # 左侧：页码导航
-        left = ttk.Frame(nav)
+        nav.grid(row=1, column=0, sticky="ew", pady=(int(round(8 * s)), 0))
+
+        # 左侧：页码导航。页码槽位用 place-less 的 pack + 空文本占位会留下
+        # 一排灰方块，改成按需 pack/pack_forget，并用 left 容器固定最小宽度
+        left = tk.Frame(nav, bg=theme.BG)
         left.pack(side="left")
-        self._nav_prev = ttk.Button(left, text="«", width=3,
-                                    command=lambda: self._jump_page(self._cur_page - 1))
-        self._nav_prev.pack(side="left", padx=1)
-        # 8 个固定槽位始终 pack，保持宽度不变，不用的设空文本（不可见但占位）
-        self._page_btns = []
-        self._ellipsis_left = tk.Label(left, text="", font=self._ui_font,
-                                        bg="#e8e8e8", width=1)
-        self._ellipsis_left.pack(side="left", padx=0)
-        for _ in range(6):
-            btn = tk.Button(left, text="", width=4, font=self._ui_font,
-                           relief="flat", bd=0)
-            btn.pack(side="left", padx=1)
-            self._page_btns.append(btn)
-        self._ellipsis_right = tk.Label(left, text="", font=self._ui_font,
-                                         bg="#e8e8e8", width=1)
-        self._ellipsis_right.pack(side="left", padx=0)
-        self._nav_next = ttk.Button(left, text="»", width=3,
-                                    command=lambda: self._jump_page(self._cur_page + 1))
-        self._nav_next.pack(side="left", padx=1)
-        # 右侧：每页条数 + 跳转 + 总页数
+        self._nav_prev = self._nav_button(left, "‹",
+                                          lambda: self._jump_page(self._cur_page - 1))
+        self._nav_prev.pack(side="left")
+        self._ellipsis_left = tk.Label(left, text="…", font=self._ui_font,
+                                       bg=theme.BG, fg=theme.TEXT_MUTED,
+                                       width=2)
+        self._page_btns = [self._page_button(left) for _ in range(6)]
+        self._ellipsis_right = tk.Label(left, text="…", font=self._ui_font,
+                                        bg=theme.BG, fg=theme.TEXT_MUTED,
+                                        width=2)
+        self._nav_next = self._nav_button(left, "›",
+                                          lambda: self._jump_page(self._cur_page + 1))
+        self._nav_next.pack(side="left")
+
+        # 右侧：总条数 + 每页条数 + 跳转
         right = ttk.Frame(nav)
         right.pack(side="right")
-        ttk.Label(right, text="每页", font=self._ui_font).pack(side="left", padx=(8, 2))
+        self._total_pages_var = tk.StringVar(value="共 0 页")
+        ttk.Label(right, textvariable=self._total_pages_var,
+                  style="Hint.TLabel").pack(side="left", padx=(0, pad * 2))
+        ttk.Label(right, text="每页", style="Field.TLabel").pack(
+            side="left", padx=(0, pad))
         self._page_size_var = tk.StringVar(value="50")
         self._page_size_combo = ttk.Combobox(
             right, textvariable=self._page_size_var,
             values=["10", "20", "50", "100", "200", "500"],
-            state="readonly", width=5, font=self._ui_font)
-        self._page_size_combo.pack(side="left", padx=2)
+            state="readonly", width=4, font=self._ui_font)
+        self._page_size_combo.pack(side="left")
         self._page_size_combo.bind("<<ComboboxSelected>>", self._on_page_size_change)
-        ttk.Label(right, text="跳转", font=self._ui_font).pack(side="left", padx=(8, 2))
+        ttk.Label(right, text="跳至", style="Field.TLabel").pack(
+            side="left", padx=(pad * 2, pad))
         self._jump_var = tk.StringVar()
-        self._jump_entry = ttk.Entry(right, textvariable=self._jump_var, width=5,
-                                     font=self._ui_font)
-        self._jump_entry.pack(side="left", padx=2)
+        self._jump_entry = ttk.Entry(right, textvariable=self._jump_var, width=4,
+                                     font=self._ui_font, justify="center")
+        self._jump_entry.pack(side="left")
         self._jump_entry.bind("<Return>", lambda e: self._jump_by_input())
-        ttk.Button(right, text="Go", width=3,
-                   command=self._jump_by_input).pack(side="left", padx=2)
-        ttk.Label(right, text="总", font=self._ui_font).pack(side="left", padx=(8, 2))
-        self._total_pages_var = tk.StringVar(value="0 页")
-        ttk.Label(right, textvariable=self._total_pages_var,
-                  font=self._ui_font, width=6, anchor="center").pack(side="left")
+        ttk.Button(right, text="Go", command=self._jump_by_input).pack(
+            side="left", padx=(pad, 0))
 
         # 右键菜单
         self.ctx_menu = tk.Menu(parent, tearoff=0, font=self._ui_font)
@@ -223,6 +248,39 @@ class ResultTable:
             label="打开所在目录",
             command=lambda: self._on_open_dir(self._selected_data()))
 
+        self._update_page_bar()
+        self._show_empty(True)
+
+    # ---------- 翻页栏控件工厂 ----------
+
+    def _flat_btn(self, parent, **kw):
+        opts = dict(font=self._ui_font, bg=theme.BG, fg=theme.TEXT,
+                    activebackground="#e4ecf8", activeforeground=theme.ACCENT,
+                    relief="flat", bd=0, highlightthickness=0, cursor="hand2",
+                    disabledforeground="#b6bac1",
+                    padx=int(round(4 * self._scale)),
+                    pady=int(round(2 * self._scale)))
+        opts.update(kw)
+        return tk.Button(parent, **opts)
+
+    def _nav_button(self, parent, text, command):
+        """上一页 / 下一页箭头。"""
+        return self._flat_btn(parent, text=text, width=2, command=command,
+                              fg=theme.TEXT_MUTED)
+
+    def _page_button(self, parent):
+        """页码按钮（文本/命令/配色由 _update_page_bar 填）。"""
+        return self._flat_btn(parent, text="", width=3)
+
+    def _style_page_btn(self, btn, current):
+        """当前页：主色底白字；其余：透明底常规字。"""
+        if current:
+            btn.configure(state="disabled", bg=theme.ACCENT,
+                          disabledforeground="#ffffff", cursor="arrow")
+        else:
+            btn.configure(state="normal", bg=theme.BG, fg=theme.TEXT,
+                          cursor="hand2")
+
     # ------------------------------------------------------------------ #
     #  公共接口                                                            #
     # ------------------------------------------------------------------ #
@@ -233,14 +291,31 @@ class ResultTable:
         self._destroy_page_widgets()
         self.all_rows = list(rows)
         self._cur_page = 1
+        self._empty_text = "没有匹配的内容"
         self._render()
+
+    def set_empty_text(self, text):
+        """自定义空状态文案（搜索前/搜索中等）。"""
+        self._empty_text = text
+        if not self.all_rows:
+            self._show_empty(True)
+
+    def _show_empty(self, show):
+        if show:
+            self._empty_lbl.configure(text=self._empty_text)
+            self._empty_lbl.place(relx=0.5, rely=0.42, anchor="center")
+        else:
+            self._empty_lbl.place_forget()
 
     def clear(self):
         self.all_rows = []
         self.sel_index = None
         self._destroy_page_widgets()
+        self._show_empty(True)
         self._total_pages = 1
-        self._total_pages_var.set("0 页")
+        self._cur_page = 1
+        self._update_page_bar()
+        self._total_pages_var.set("共 0 页")
 
     def sort_by(self, col):
         _COL_IDX = {"#": None, "file": 0, "sheet": 1, "row": 2, "col": 3, "value": 4}
@@ -318,7 +393,9 @@ class ResultTable:
         if not self.all_rows:
             self._total_pages = 1
             self._update_page_bar()
+            self._show_empty(True)
             return
+        self._show_empty(False)
 
         self._total_pages = max(1, (len(self.all_rows) + self._page_size - 1) // self._page_size)
         self._cur_page = min(self._cur_page, self._total_pages)
@@ -406,8 +483,9 @@ class ResultTable:
                 c.configure(state="normal", bg=bg, fg=fg)
                 c.delete("1.0", "end")
                 c.insert("1.0", texts[ci])
-                c.configure(state="disabled")
-                c.configure(wrap="word")
+                c.configure(state="disabled", wrap="word",
+                            height=self._val_height(texts[ci],
+                                                    self._col_width(ci)))
             else:
                 c.configure(text=self._fit_col_text(texts[ci], w, middle=(ci == 1)),
                             bg=bg, fg=fg)
@@ -428,16 +506,17 @@ class ResultTable:
             if ci == self._value_ci:
                 c = tk.Text(self.rows_frame, wrap="word", font=self._ui_font,
                             bd=0, highlightthickness=0, padx=6, pady=3,
-                            cursor="arrow", height=self.VAL_LINES, width=1,
-                            bg=bg, fg=fg)
+                            cursor="arrow", width=1, bg=bg, fg=fg,
+                            height=self._val_height(texts[ci],
+                                                    self._col_width(ci)))
                 c.insert("1.0", texts[ci])
                 c.configure(state="disabled")
-                c.configure(wrap="word")
             else:
                 just = {"w": "left", "e": "right", "center": "center"}[anchor]
-                anc  = {"w": "nw",   "e": "ne",    "center": "n"}[anchor]
+                # 垂直居中（不再用 nw/n 顶到上边）：值列现在按内容 1~2 行变高，
+                # 顶对齐会让两行行里的其它列文字偏上，看着高低不齐
                 c = tk.Label(self.rows_frame, font=self._ui_font,
-                             anchor=anc, justify=just, padx=6, pady=3,
+                             anchor=anchor, justify=just, padx=6, pady=3,
                              bg=bg, fg=fg)
                 c.configure(text=self._fit_col_text(texts[ci], w, middle=(ci == 1)))
             c.grid(row=page_row, column=ci * 2, sticky="we")
@@ -446,7 +525,7 @@ class ResultTable:
 
         # 竖线分隔
         for ci in range(len(self.col_spec) - 1):
-            sep = tk.Frame(self.rows_frame, bg="#e0e0e0", width=1, height=1)
+            sep = tk.Frame(self.rows_frame, bg=theme.GRID, width=1, height=1)
             sep.grid(row=page_row, column=ci * 2 + 1, sticky="ns")
 
         self._page_widgets.append((cells, global_idx))
@@ -515,6 +594,17 @@ class ResultTable:
         for child in list(self.rows_frame.winfo_children()):
             child.destroy()
 
+    def _val_height(self, text, col_px):
+        """值列文本按当前列宽需要几行（1..VAL_LINES）。
+
+        固定 2 行高时，单行值会顶在格子上半部分，而同一行其它列是垂直
+        居中的，看着错层；按实际行数定高后每行都贴合内容。
+        """
+        inner = max(20, col_px - 14)
+        if self._ui_font_obj.measure(text) <= inner:
+            return 1
+        return self.VAL_LINES
+
     def _value_snippet(self, val, col_px):
         """取以关键字为中心、约 VAL_LINES 行长度的片段。"""
         inner = max(20, col_px - 14)
@@ -581,32 +671,21 @@ class ResultTable:
         self._jump_page(pg)
 
     def _update_page_bar(self):
-        """更新页码按钮。8 个槽位始终在 « » 之间，不用的设空文本，宽度不变。"""
+        """更新页码按钮：只把真正用到的槽位 pack 出来。
+
+        省略号两侧的 Label 始终占位（不用时文本置空，底色同窗口所以不可见），
+        这样在同一批结果里翻页时整条导航不会左右抖动。
+        """
         tp = self._total_pages
         cp = self._cur_page
-        self._total_pages_var.set(f"{tp} 页")
+        self._total_pages_var.set(f"共 {tp} 页" if self.all_rows else "共 0 页")
 
-        if tp <= 1:
-            # 只有一页也显示 1
-            self._ellipsis_left.configure(text="")
-            self._ellipsis_right.configure(text="")
-            self._page_btns[0].configure(text="1", state="disabled",
-                                         disabledforeground="#ffffff",
-                                         bg=self._bg_sel, relief="flat")
-            for btn in self._page_btns[1:]:
-                btn.configure(text="", state="normal", bg="#e8e8e8")
-            self._nav_prev.configure(state="disabled")
-            self._nav_next.configure(state="disabled")
-            return
-
-        # ≤ 6 页：全部显示，无省略号
         if tp <= 6:
             pages = list(range(1, tp + 1))
             show_left = show_right = False
         else:
             # > 6 页：6 个槽位只显示 6 个连续页码，当前页尽量居中
-            lo = cp - 2
-            hi = cp + 3
+            lo, hi = cp - 2, cp + 3
             if lo < 1:
                 lo, hi = 1, min(6, tp)
             if hi > tp:
@@ -617,19 +696,20 @@ class ResultTable:
 
         self._ellipsis_left.configure(text="…" if show_left else "")
         self._ellipsis_right.configure(text="…" if show_right else "")
-        for i, btn in enumerate(self._page_btns):
-            if i < len(pages):
-                p = pages[i]
-                if p == cp:
-                    btn.configure(text=str(p), state="disabled",
-                                  disabledforeground="#ffffff",
-                                  bg=self._bg_sel, relief="flat")
-                else:
-                    btn.configure(text=str(p), state="normal",
-                                  bg="#e8e8e8", fg="black")
-                btn.configure(command=lambda pg=p: self._jump_page(pg))
-            else:
-                btn.configure(text="", state="normal", bg="#e8e8e8")
+
+        # 先全部摘下，再按 左省略号 → 页码 → 右省略号 的顺序插回 › 之前
+        for w in [self._ellipsis_left, *self._page_btns, self._ellipsis_right]:
+            w.pack_forget()
+        seq = [self._ellipsis_left]
+        for i, p in enumerate(pages):
+            btn = self._page_btns[i]
+            btn.configure(text=str(p),
+                          command=lambda pg=p: self._jump_page(pg))
+            self._style_page_btn(btn, p == cp)
+            seq.append(btn)
+        seq.append(self._ellipsis_right)
+        for w in seq:
+            w.pack(side="left", padx=1, before=self._nav_next)
 
         self._nav_prev.configure(state="disabled" if cp <= 1 else "normal")
         self._nav_next.configure(state="disabled" if cp >= tp else "normal")
@@ -765,23 +845,43 @@ class ResultTable:
             tw.attributes("-topmost", True)
         except Exception:
             pass
+        px = lambda n: int(round(n * self._scale))
+        mx, my = self._parent.winfo_pointerx(), self._parent.winfo_pointery()
+        left, top, right, bottom = theme.monitor_bounds(self._parent, mx, my)
+        body = tk.Frame(tw, bg=theme.TIP_BG, bd=0, highlightthickness=0)
+        body.pack()
+        # 注意：tk.Label 的 pady 只吃单个数值，上下不等的间距要交给 pack 的
+        # pady（二元组塞进控件的 pady 会抛 TclError，提示就整个不显示了）
         if header is not None:
-            # 两行提示：第一行内容，第二行提示文字
-            txt = header + "\n" + text
-            max_w = min(800, self._parent.winfo_screenwidth() - 100)
-            lbl = tk.Label(tw, text=txt, font=self._ui_font,
-                           bg="#ffffcc", fg="#333333", bd=1, relief="solid",
-                           padx=8, pady=3, justify="left", wraplength=max_w)
-            lbl.pack()
+            # 两行：第一行是内容本身，第二行是操作提示（弱化配色）
+            max_w = min(px(620), (right - left) - px(100))
+            tk.Label(body, text=header, font=self._ui_font, bg=theme.TIP_BG,
+                     fg=theme.TIP_FG, padx=px(10),
+                     justify="left", anchor="w",
+                     wraplength=max_w).pack(fill="x", pady=(px(5), 0))
+            tk.Label(body, text=text, font=self._ui_font, bg=theme.TIP_BG,
+                     fg=theme.TIP_HINT, padx=px(10),
+                     justify="left", anchor="w").pack(fill="x",
+                                                      pady=(px(1), px(5)))
         else:
-            lbl = tk.Label(tw, text=text, font=self._ui_font,
-                           bg="#ffffcc", fg="#333333", bd=1, relief="solid",
-                           padx=8, pady=3)
-            lbl.pack()
+            tk.Label(body, text=text, font=self._ui_font, bg=theme.TIP_BG,
+                     fg=theme.TIP_FG, padx=px(10)).pack(pady=px(5))
         tw.update_idletasks()
-        wx = self._parent.winfo_pointerx() + 14
-        wy = self._parent.winfo_pointery() + 14
-        tw.wm_geometry(f"+{wx}+{wy}")
+        # 贴着鼠标右下方显示，但整块提示要留在当前显示器内——值列在窗口右侧，
+        # 直接 +14 会把长提示推出屏幕，右半截就被切掉了
+        tw_w, tw_h = tw.winfo_reqwidth(), tw.winfo_reqheight()
+        gap, edge = px(14), px(8)
+        wx, wy = mx + gap, my + gap
+        # 右边放不下就翻到鼠标左侧（左边同样放不下时才退回右侧硬贴边）
+        if wx + tw_w > right - edge:
+            flipped = mx - tw_w - gap
+            wx = flipped if flipped >= left + edge else wx
+        if wy + tw_h > bottom - edge:           # 下边放不下 -> 翻到鼠标上方
+            flipped = my - tw_h - gap
+            wy = flipped if flipped >= top + edge else wy
+        wx = max(left + edge, min(wx, right - tw_w - edge))
+        wy = max(top + edge, min(wy, bottom - tw_h - edge))
+        tw.wm_geometry(f"+{int(wx)}+{int(wy)}")
         self._tooltip = tw
 
     def _hide_tooltip(self):

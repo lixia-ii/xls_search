@@ -23,15 +23,13 @@ MAX_SOURCES = 20
 
 # ---------- 界面偏好 ----------
 
+# 界面改版时递增。col_px 存的是绝对像素，换主题后正文字号变了、旧值会偏大，
+# 版本号不一致时清掉它，让表格按当前 DPI 重算默认列宽（其它偏好保留）。
+UI_VERSION = 2
+
 DEFAULT_SETTINGS = {
     "mode": "2",
-    "col_px": {
-        "#": 83,
-        "file": 254,
-        "sheet": 169,
-        "row": 75,
-        "col": 105,
-    },
+    "ui_version": UI_VERSION,
     "page_size": 100,
     "close_action": "ask",   # 关闭窗口时的行为：ask/exit/tray
 }
@@ -40,10 +38,16 @@ DEFAULT_SETTINGS = {
 def load_settings():
     try:
         with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            d = json.load(f)
     except Exception:
         save_settings(DEFAULT_SETTINGS)
         return dict(DEFAULT_SETTINGS)
+
+    if d.get("ui_version") != UI_VERSION:
+        d["ui_version"] = UI_VERSION
+        d.pop("col_px", None)
+        save_settings(d)
+    return d
 
 
 def save_settings(d):

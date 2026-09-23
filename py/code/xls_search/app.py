@@ -17,6 +17,7 @@ from tkinter import ttk, filedialog, messagebox
 import xls_search.excel_actions as excel_actions
 import xls_search.ime as ime
 import xls_search.search_excel as search_excel
+import xls_search.theme as theme
 from xls_search.paths import col_letter, col_name_to_num, ASSETS_DIR
 from xls_search.storage import (load_settings, save_settings,
                                 load_keywords, save_keyword,
@@ -63,87 +64,72 @@ class App:
     # ================================================================== #
 
     def _build_ui(self):
-        pad = {"padx": 6, "pady": 4}
-        s = self.scale
-        px = lambda n: -int(round(n * s))          # 像素字号（负值=像素高）
+        self.theme = theme.setup(self.root, self.scale)
+        self.ui_font   = self.theme.font
+        self.head_font = self.theme.font_bold
 
-        style = ttk.Style()
-        self.ui_font   = ("Microsoft YaHei UI", px(17))
-        self.head_font = ("Microsoft YaHei UI", px(17), "bold")
-        entry_font     = ("Microsoft YaHei UI", px(17), "bold")     # 输入框内文字加粗更显眼
-        for st in (".", "TLabel", "TButton", "TRadiobutton", "TCheckbutton"):
-            style.configure(st, font=self.ui_font)
-        style.configure("TEntry",    font=entry_font)
-        style.configure("TCombobox", font=entry_font)
-        kw_font = ("Microsoft YaHei UI", px(20))   # 关键字框：经典 tk.Entry 才吃 font
-        self.root.option_add("*TCombobox*Listbox.font", self.ui_font)  # 下拉历史也放大
-
-        self._build_toolbar(pad, kw_font, px, s)
-        self._build_table(pad, s)
-        self._build_statusbar(pad)
+        self._build_toolbar()
+        self._build_table()
+        self._build_statusbar()
 
     def _open_settings(self):
         SettingsDialog(self)
 
     # ---------- 工具栏 ----------
+    #
+    # 三行（目录 / 关键字 / 模式）共用一个 grid：第 0 列是等宽的行首标签，
+    # 第 1 列是会拉伸的输入区，最后一列是右对齐的按钮区。这样三行的左右
+    # 边缘都在同一条竖线上，不再各行各自 pack 出参差不齐的缩进。
 
-    def _build_toolbar(self, pad, kw_font, px, s):
-        # 目录行
-        top = ttk.Frame(self.root)
-        top.pack(fill="x", **pad)
-        ttk.Label(top, text="xls 目录:").grid(row=0, column=0, sticky="w")
+    def _build_toolbar(self):
+        t = self.theme
+        px = t.px
+        bar = ttk.Frame(self.root, padding=(px(14), px(12), px(14), px(10)))
+        bar.pack(fill="x")
+        bar.columnconfigure(1, weight=1)
+        gap_y = px(8)
+
+        def label(text, row):
+            ttk.Label(bar, text=text, style="Field.TLabel").grid(
+                row=row, column=0, sticky="w", padx=(0, px(10)),
+                pady=(0, gap_y))
+
+        # ---- 第 1 行：目录 ----
+        label("目录", 0)
         self.dir_var = tk.StringVar()
-        self.dir_combo = ttk.Combobox(top, textvariable=self.dir_var, width=70)
-        self.dir_combo.grid(row=0, column=1, sticky="we", padx=4)
+        self.dir_combo = ttk.Combobox(bar, textvariable=self.dir_var,
+                                      font=t.font)
+        self.dir_combo.grid(row=0, column=1, sticky="we", pady=(0, gap_y))
         self.dir_combo.bind("<Return>", lambda e: self._on_dir_return(e))
         self.dir_combo.bind("<<ComboboxSelected>>", lambda e: self._on_dir_selected())
         # 点击别处时目录输入框失去焦点（bind_all 在事件链最末执行，
         # 不影响 Combobox 下拉选择等内部处理）
         self.root.bind_all("<Button-1>", self._on_global_dir_click, add="+")
-        ttk.Button(top, text="浏览…", command=self._browse).grid(row=0, column=2)
-        ttk.Button(top, text="设置", command=self._open_settings).grid(
-            row=0, column=3, padx=(8, 0))
-        top.columnconfigure(1, weight=1)
 
-        # 模式行
-        mode_frame = ttk.Frame(self.root)
-        mode_frame.pack(fill="x", **pad)
-        ttk.Label(mode_frame, text="模式:").pack(side="left")
-        saved_mode = self.settings.get("mode", "2")
-        self.mode_var = tk.StringVar(
-            value=saved_mode if saved_mode in ("0", "1", "2") else "2")
-        for val, text in [("0", "搜文件名"), ("1", "搜内容（逐文件）"), ("2", "搜内容（用索引）")]:
-            ttk.Radiobutton(mode_frame, text=text, value=val,
-                            variable=self.mode_var).pack(side="left", padx=6)
-        self.mode_var.trace_add("write", lambda *a: self._save_mode())
+        dir_btns = ttk.Frame(bar)
+        dir_btns.grid(row=0, column=2, sticky="e", padx=(px(8), 0),
+                      pady=(0, gap_y))
+        ttk.Button(dir_btns, text="浏览…", command=self._browse).pack(
+            side="left")
+        ttk.Button(dir_btns, text="设置", command=self._open_settings).pack(
+            side="left", padx=(px(6), 0))
 
-        # 索引操作下拉：选择「更新变动 / 重建全部」后弹确认再后台执行
-        self._index_placeholder = "索引操作 ▾"
-        self.index_action_var = tk.StringVar(value=self._index_placeholder)
-        self.index_combo = ttk.Combobox(
-            mode_frame, textvariable=self.index_action_var,
-            state="readonly", width=14,
-            values=["更新变动索引", "重建全部索引"])
-        self.index_combo.pack(side="left", padx=(14, 6))
-        self.index_combo.bind("<<ComboboxSelected>>", self._on_index_action)
-
-        # 模式行最右：文件/索引不同步时的绿字提醒
-        self.sync_var = tk.StringVar(value="")
-        ttk.Label(mode_frame, textvariable=self.sync_var, foreground="#0a9a0a",
-                  font=("Microsoft YaHei UI", px(10), "bold")
-                  ).pack(side="right", padx=8)
-
-        # 关键字行
-        kw = ttk.Frame(self.root)
-        kw.pack(fill="x", **pad)
-        ttk.Label(kw, text="关键字:").grid(row=0, column=0, sticky="w")
+        # ---- 第 2 行：关键字 + 搜索 ----
+        label("关键字", 1)
+        kw_box, kw_inner = t.field_box(bar)
+        kw_box.grid(row=1, column=1, sticky="we", pady=(0, gap_y))
         self.kw_var = tk.StringVar()
-        self.kw_entry = tk.Entry(kw, textvariable=self.kw_var, font=kw_font,
-                                 relief="solid", bd=1)
-        self.kw_entry.grid(row=0, column=1, sticky="we", padx=4,
-                           ipady=int(round(4 * self.scale)))
+        self.kw_entry = tk.Entry(kw_inner, textvariable=self.kw_var,
+                                 font=t.font_kw, relief="flat", bd=0,
+                                 bg=theme.CARD, fg=theme.TEXT,
+                                 insertbackground=theme.TEXT,
+                                 selectbackground=theme.ACCENT_SOFT,
+                                 selectforeground=theme.TEXT,
+                                 highlightthickness=0)
+        self.kw_entry.pack(fill="both", expand=True, padx=px(6), pady=px(5))
         self.kw_entry.bind("<Return>", lambda e: self._start_search())
-        self.kw_entry.bind("<FocusIn>", lambda e: self._set_kw_ime_font())
+        self.kw_entry.bind("<FocusIn>", lambda e: self._on_kw_focus(kw_box, True))
+        self.kw_entry.bind("<FocusOut>", lambda e: self._on_kw_focus(kw_box, False))
 
         # 历史下拉：点击输入框弹出、输入时实时筛选（自定义弹层，不抢输入焦点）
         self._kw_popup = KeywordPopup(
@@ -153,27 +139,71 @@ class App:
             ui_font=self.ui_font,
             on_pick=self._on_kw_pick,
             is_busy=lambda: self.busy,
+            anchor=kw_box,
         )
         self._refresh_keywords()
 
+        self.search_btn = ttk.Button(bar, text="搜索", style="Accent.TButton",
+                                     command=self._start_search)
+        self.search_btn.grid(row=1, column=2, sticky="nsew", padx=(px(8), 0),
+                             pady=(0, gap_y))
+
+        # ---- 第 3 行：模式 + 过滤条件 ----
+        label("模式", 2)
+        opts = ttk.Frame(bar)
+        opts.grid(row=2, column=1, columnspan=2, sticky="we")
+
+        saved_mode = self.settings.get("mode", "2")
+        self.mode_var = tk.StringVar(
+            value=saved_mode if saved_mode in ("0", "1", "2") else "2")
+        seg = tk.Frame(opts, bg=theme.BORDER, bd=0, highlightthickness=0)
+        seg.grid(row=0, column=0, sticky="w")
+        seg_in = tk.Frame(seg, bg=theme.BG, bd=0, highlightthickness=0)
+        seg_in.pack(padx=1, pady=1)
+        for val, text in [("0", "文件名"), ("1", "内容·逐文件"), ("2", "内容·索引")]:
+            ttk.Radiobutton(seg_in, text=text, value=val,
+                            variable=self.mode_var, style="Toolbutton",
+                            takefocus=False).pack(side="left")
+        self.mode_var.trace_add("write", lambda *a: self._save_mode())
+
+        # 索引操作：菜单按钮（原来的 readonly Combobox 会把选项写进框里，
+        # 还得手动复位占位文字，换成 Menubutton 更贴合"执行动作"的语义）
+        self.index_btn = ttk.Menubutton(opts, text="索引操作")
+        index_menu = tk.Menu(self.index_btn, tearoff=0, font=t.font)
+        index_menu.add_command(label="更新变动索引",
+                               command=lambda: self._on_index_action("3"))
+        index_menu.add_command(label="重建全部索引",
+                               command=lambda: self._on_index_action("4"))
+        self.index_btn.configure(menu=index_menu)
+        self.index_btn.grid(row=0, column=1, sticky="w", padx=(px(10), px(16)))
+
         self.exact_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(kw, text="精确匹配",
-                        variable=self.exact_var).grid(row=0, column=2, padx=4)
-        ttk.Label(kw, text="文件名含:").grid(row=0, column=3, sticky="w")
+        ttk.Checkbutton(opts, text="精确匹配", variable=self.exact_var,
+                        takefocus=False).grid(row=0, column=2, sticky="w")
+
+        ttk.Label(opts, text="文件名含", style="Field.TLabel").grid(
+            row=0, column=3, sticky="w", padx=(px(16), px(6)))
         self.filter_var = tk.StringVar()
-        ttk.Entry(kw, textvariable=self.filter_var,
-                  width=14).grid(row=0, column=4, padx=4)
-        ttk.Label(kw, text="限定列:").grid(row=0, column=5, sticky="w")
+        ttk.Entry(opts, textvariable=self.filter_var, font=t.font,
+                  width=12).grid(row=0, column=4, sticky="w")
+        ttk.Label(opts, text="限定列", style="Field.TLabel").grid(
+            row=0, column=5, sticky="w", padx=(px(14), px(6)))
         self.col_var = tk.StringVar()
-        ttk.Entry(kw, textvariable=self.col_var,
-                  width=5).grid(row=0, column=6, padx=4)
-        self.search_btn = ttk.Button(kw, text="搜索", command=self._start_search)
-        self.search_btn.grid(row=0, column=7, padx=6)
-        kw.columnconfigure(1, weight=1)
+        ttk.Entry(opts, textvariable=self.col_var, font=t.font,
+                  width=5).grid(row=0, column=6, sticky="w")
+
+        t.hline(self.root).pack(fill="x")
+
+    def _on_kw_focus(self, box, focused):
+        """关键字框聚焦时把外框边线染成主题蓝，和 ttk.Entry 的表现保持一致。"""
+        box.configure(bg=theme.ACCENT if focused else theme.BORDER)
+        if focused:
+            self._set_kw_ime_font()
 
     # ---------- 表格区 ----------
 
-    def _build_table(self, pad, s):
+    def _build_table(self):
+        s = self.scale
         saved_px = self.settings.get("col_px", {})   # 记忆的列宽（像素）
 
         def _w(key, default):
@@ -186,16 +216,18 @@ class App:
 
         # 列定义：(key, 标题, 固定像素宽 或 None=填充剩余, 对齐)
         col_spec = [
-            ["#",     "#",     _w("#", 55),      "center"],
+            ["#",     "#",     _w("#", 52),      "center"],
             ["file",  "文件",  _w("file", 300),  "w"],
             ["sheet", "Sheet", _w("sheet", 150), "center"],
-            ["row",   "行",    _w("row", 70),    "center"],
-            ["col",   "列",    _w("col", 80),    "center"],
+            ["row",   "行",    _w("row", 64),    "center"],
+            ["col",   "列",    _w("col", 86),    "center"],
             ["value", "值",    None,             "w"],
         ]
 
-        table_frame = ttk.Frame(self.root)
-        table_frame.pack(fill="both", expand=True, **pad)
+        px = self.theme.px
+        table_frame = ttk.Frame(self.root, padding=(px(14), px(10),
+                                                    px(14), px(4)))
+        table_frame.pack(fill="both", expand=True)
 
         self.table = ResultTable(
             parent=table_frame,
@@ -203,7 +235,7 @@ class App:
             scale=s,
             ui_font=self.ui_font,
             head_font=self.head_font,
-            hl_color="#e8590c",                # 关键字命中：橙色
+            hl_color=theme.HL,                 # 关键字命中
             on_open_file=self._ctx_open_file,
             on_view_value=self._ctx_view_value,
             on_copy_name=self._ctx_copy_name,
@@ -220,17 +252,29 @@ class App:
 
     # ---------- 状态栏 ----------
 
-    def _build_statusbar(self, pad):
-        bottom = ttk.Frame(self.root)
-        bottom.pack(fill="x", **pad)
-        self.progress = ttk.Progressbar(bottom, mode="determinate")
-        self.progress.pack(side="left", fill="x", expand=True, padx=4)
-        # 取消按钮先创建但不 pack —— 无任务时隐藏，busy 时才显示（见 _set_busy）
-        self.cancel_btn = ttk.Button(bottom, text="取消", command=self._cancel)
+    def _build_statusbar(self):
+        px = self.theme.px
+        self.theme.hline(self.root).pack(fill="x")
+        bottom = ttk.Frame(self.root, padding=(px(14), px(7), px(14), px(7)))
+        bottom.pack(fill="x")
+        # 状态文字放左边（读起来顺），进度条占中间的弹性空间，取消按钮在最右
         self.status_var = tk.StringVar(value="就绪")
         self.status_lbl = ttk.Label(bottom, textvariable=self.status_var,
-                                    width=40, anchor="w")
-        self.status_lbl.pack(side="right", padx=6)
+                                    style="Hint.TLabel", anchor="w")
+        self.status_lbl.pack(side="left")
+
+        # 索引过期提醒：原先挤在过滤条件行的最右端，会把「限定列」输入框顶出
+        # 窗口；这里挪到状态栏右侧，横向空间充裕，也更符合"提示信息"的定位
+        self.sync_var = tk.StringVar(value="")
+        ttk.Label(bottom, textvariable=self.sync_var, style="Warn.TLabel",
+                  anchor="e").pack(side="right", padx=(px(12), 0))
+        # 取消按钮先创建但不 pack —— 无任务时隐藏，busy 时才显示（见 _set_busy）
+        self.cancel_btn = ttk.Button(bottom, text="取消", command=self._cancel)
+        self.progress = ttk.Progressbar(bottom, mode="determinate",
+                                        style="Slim.Horizontal.TProgressbar")
+        self._progress_pack = dict(side="left", fill="x", expand=True,
+                                   padx=(px(14), px(4)), pady=px(5))
+        # 进度条同样只在 busy 时出现，空闲时状态栏就是一行干净的提示文字
 
     # ================================================================== #
     #  目录 / 关键字历史                                                  #
@@ -297,9 +341,9 @@ class App:
         self._kw_popup.set_keywords(kws)
 
     def _set_kw_ime_font(self):
-        # 让正在输入的拼音字体跟随关键字框（雅黑 20px 常规）
-        ime.set_composition_font(self.kw_entry, 20 * self.scale,
-                                 family="Microsoft YaHei UI", weight=400)
+        # 让正在输入的拼音字体跟随关键字框，避免上屏前后字号跳变
+        ime.set_composition_font(self.kw_entry, self.theme.kw_px,
+                                 family=theme.FAMILY, weight=400)
 
     def _on_kw_pick(self, keyword):
         """关键字下拉选中后直接触发搜索。"""
@@ -366,26 +410,25 @@ class App:
         self.cancel_event.clear()
         self._set_busy(True)
         self.table.clear()
+        self.table.set_empty_text("正在搜索…")
         self._controller.run_search(
             xls_dir=xls_dir, keyword=keyword, exact=exact,
             filter_str=filter_str, col_filter=col_filter, mode=mode)
 
-    def _on_index_action(self, event=None):
-        action = self.index_action_var.get()
-        self.index_action_var.set(self._index_placeholder)   # 复位下拉显示
-        self.index_combo.selection_clear()
+    def _on_index_action(self, mode):
+        """索引菜单项：mode "3"=更新变动，"4"=重建全部。确认后后台执行。"""
         if self.busy:
             return
-        if action == "重建全部索引":
-            if messagebox.askyesno(
-                    "确认重建",
-                    "将清空并重新建立全部索引，耗时较久。\n确定重建全部索引吗？"):
-                self._start_index_build("4")
-        elif action == "更新变动索引":
-            if messagebox.askyesno(
-                    "确认更新",
-                    "将只重建有变动的文件索引。\n确定更新变动索引吗？"):
-                self._start_index_build("3")
+        if mode == "4":
+            ok = messagebox.askyesno(
+                "确认重建",
+                "将清空并重新建立全部索引，耗时较久。\n确定重建全部索引吗？")
+        else:
+            ok = messagebox.askyesno(
+                "确认更新",
+                "将只重建有变动的文件索引。\n确定更新变动索引吗？")
+        if ok:
+            self._start_index_build(mode)
 
     def _start_index_build(self, mode):
         if self.busy:
@@ -399,6 +442,7 @@ class App:
         self.cancel_event.clear()
         self._set_busy(True)
         self.table.clear()
+        self.table.set_empty_text("正在处理索引…")
         self._controller.run_index_build(xls_dir=xls_dir, mode=mode)
 
     # ================================================================== #
@@ -446,7 +490,7 @@ class App:
         self.table.set_rows(rows, hl_keyword=self._hl_keyword)
         self.progress["value"] = self.progress["maximum"]
         total = len(self.table.all_rows)
-        self.status_var.set("没有匹配" if total == 0 else f"找到 {total} 条")
+        self.status_var.set("没有匹配的内容" if total == 0 else f"找到 {total} 条结果")
 
     # ================================================================== #
     #  右键菜单动作                                                       #
@@ -481,6 +525,25 @@ class App:
             full, sheet, row, col, jump_cell=jump_cell,
             on_status=lambda msg: self.q.put(("status", msg)))
 
+    @staticmethod
+    def _val_info_text(seq, file, sheet, row, col):
+        """「完整值」窗口工具栏里的那行上下文信息。"""
+        return (f"#{seq} {os.path.basename(file)}\n"
+                f"Sheet={sheet} | {col_letter(col)}{row}")
+
+    def _wrap_val_info(self, event, win):
+        """按工具栏实际宽度设定信息标签的换行宽度。
+
+        ttk.Label 的 wraplength 只认固定像素，窗口可缩放就得跟着变；减去
+        「打开文件」按钮和内边距占掉的宽度，剩下多少才是文字能用的。
+        """
+        lbl = getattr(win, "_val_info_lbl", None)
+        if lbl is None or not lbl.winfo_exists():
+            return
+        btn = lbl.master.grid_slaves(row=0, column=1)
+        reserved = (btn[0].winfo_reqwidth() if btn else 0) + self.theme.px(36)
+        lbl.configure(wraplength=max(self.theme.px(80), event.width - reserved))
+
     def _ctx_view_value(self, data, idx, table):
         """弹出可滚动窗口显示某行的完整值（不受表格两行片段限制）。"""
         if data is None:
@@ -501,7 +564,7 @@ class App:
             old._val_col = col
             if hasattr(old, "_val_info_lbl"):
                 old._val_info_lbl.configure(
-                    text=f"#{seq} {os.path.basename(file)} | Sheet={sheet} | {col_letter(col)}{row}")
+                    text=self._val_info_text(seq, file, sheet, row, col))
             txt = old._val_text
             txt.configure(state="normal")
             txt.delete("1.0", "end")
@@ -509,7 +572,7 @@ class App:
             kw = self._hl_keyword
             if kw:
                 txt.tag_delete("hit")
-                txt.tag_configure("hit", foreground="#e8590c", font=self.head_font)
+                txt.tag_configure("hit", foreground=theme.HL, font=self.head_font)
                 start, n = "1.0", len(kw)
                 while True:
                     pos = txt.search(kw, start, stopindex="end", nocase=1)
@@ -518,33 +581,38 @@ class App:
                     txt.tag_add("hit", pos, f"{pos}+{n}c")
                     start = f"{pos}+{n}c"
             txt.configure(state="disabled")
+            # 主窗口挪过位置就跟着重新贴边；没挪过则保留用户自己拖的位置
+            theme.reposition_if_parent_moved(old, self.root,
+                                             theme.place_beside)
             old.deiconify()
             old.lift()
             return
 
         win = tk.Toplevel(self.root)
         self._view_val_win = win
+        win.configure(bg=theme.BG)
         win.title(f"完整值 — #{seq} {os.path.basename(file)}  {col_letter(col)}{row}")
         s = self.scale
-        win.geometry(f"{int(720 * s)}x{int(480 * s)}")
+        px = self.theme.px
+        # 只给尺寸不给位置时，窗口落点由系统决定（看着像随机）。这里贴在主窗口
+        # 左侧并排、与主窗口等高，方便一边看列表一边看完整值。
+        theme.place_beside(win, self.root, int(360 * s),
+                           self.root.winfo_height())
         # 保存上下文信息到窗口对象，供工具栏按钮回调使用
         win._val_full = full
         win._val_sheet = sheet
         win._val_row = row
         win._val_col = col
 
-        # 顶部工具栏：打开文件按钮（带下拉选项）
-        toolbar = ttk.Frame(win)
-        toolbar.pack(fill="x", padx=6, pady=(6, 2))
-        win._val_info_lbl = ttk.Label(toolbar,
-            text=f"#{seq} {os.path.basename(file)} | Sheet={sheet} | {col_letter(col)}{row}",
-            font=self.ui_font)
-        win._val_info_lbl.pack(side="left")
-        btn_frame = ttk.Frame(toolbar)
-        btn_frame.pack(side="right")
+        # 顶部工具栏：信息 + 打开文件按钮（带下拉选项）。
+        # 用 grid 而不是 pack —— 侧边窗口窄，pack 的 side="left" 标签会按自身
+        # 请求宽度占满，把右侧按钮挤到不显示；grid 里按钮独占一列才挤不掉。
+        toolbar = ttk.Frame(win, padding=(px(12), px(10), px(12), px(8)))
+        toolbar.pack(fill="x")
+        toolbar.columnconfigure(0, weight=1)
 
         # 用一个 MenuButton 实现"打开文件" + 两个选项
-        open_btn = ttk.Menubutton(btn_frame, text="打开文件 ▾")
+        open_btn = ttk.Menubutton(toolbar, text="打开文件")
         open_menu = tk.Menu(open_btn, tearoff=0, font=self.ui_font)
         open_menu.add_command(
             label="打开文件",
@@ -553,19 +621,35 @@ class App:
             label="打开并跳转单元格",
             command=lambda w=win: self._open_val_win_file(w, True))
         open_btn.configure(menu=open_menu)
-        open_btn.pack(side="right")
+        open_btn.grid(row=0, column=1, sticky="e", padx=(px(8), 0))
 
-        txt = tk.Text(win, wrap="word", font=self.ui_font, padx=8, pady=6)
-        vsb = ttk.Scrollbar(win, orient="vertical", command=txt.yview)
+        # 信息文字放不下就换行（窄窗口下文件名往往比一行长）
+        win._val_info_lbl = ttk.Label(
+            toolbar, text=self._val_info_text(seq, file, sheet, row, col),
+            style="Field.TLabel", justify="left", anchor="w")
+        win._val_info_lbl.grid(row=0, column=0, sticky="we")
+        toolbar.bind("<Configure>", lambda e, w=win: self._wrap_val_info(e, w))
+
+        self.theme.hline(win).pack(fill="x")
+        body = ttk.Frame(win, padding=(px(12), px(10), px(4), px(12)))
+        body.pack(fill="both", expand=True)
+        txt = tk.Text(body, wrap="word", font=self.ui_font, padx=px(10),
+                      pady=px(8), bg=theme.CARD, fg=theme.TEXT, relief="flat",
+                      bd=0, highlightthickness=1,
+                      highlightbackground=theme.BORDER,
+                      highlightcolor=theme.BORDER,
+                      selectbackground=theme.ACCENT_SOFT,
+                      selectforeground=theme.TEXT)
+        vsb = ttk.Scrollbar(body, orient="vertical", command=txt.yview)
         txt.configure(yscrollcommand=vsb.set)
-        vsb.pack(side="right", fill="y")
+        vsb.pack(side="right", fill="y", padx=(px(4), 0))
         txt.pack(side="left", fill="both", expand=True)
         win._val_text = txt   # 保存引用供后续复用
         txt.insert("1.0", val)
-        # 高亮命中关键字（与表格一致：橙色加粗）
+        # 高亮命中关键字（与表格一致）
         kw = self._hl_keyword
         if kw:
-            txt.tag_configure("hit", foreground="#e8590c", font=self.head_font)
+            txt.tag_configure("hit", foreground=theme.HL, font=self.head_font)
             start, n = "1.0", len(kw)
             while True:
                 pos = txt.search(kw, start, stopindex="end", nocase=1)
@@ -744,18 +828,20 @@ class App:
         self.busy = busy
         self.search_btn.configure(state="disabled" if busy else "normal")
         if busy:
-            # 任务运行时显示取消按钮（放在状态标签右侧，即最右）
+            # 任务运行时才显示进度条和取消按钮
+            self.progress.pack(**self._progress_pack)
             self.cancel_btn.configure(state="normal")
-            self.cancel_btn.pack(side="right", padx=6, before=self.status_lbl)
+            self.cancel_btn.pack(side="left")
             self.sync_var.set("")   # 更新/建索引期间隐藏同步提醒（此时索引正在写）
             self.kw_entry.configure(state="disabled")   # 锁定关键字输入
-            self.index_combo.configure(state="disabled")  # 锁定索引操作下拉
+            self.index_btn.configure(state="disabled")  # 锁定索引操作
             self._kw_popup.hide()
         else:
+            self.progress["value"] = 0
+            self.progress.pack_forget()
             self.cancel_btn.pack_forget()   # 无任务时隐藏
             self.kw_entry.configure(state="normal")
-            self.index_combo.configure(state="readonly")
-            self.progress["value"] = 0
+            self.index_btn.configure(state="normal")
 
     def _flash_status(self, msg, timeout=5000):
         """显示一条临时状态，timeout 毫秒后若未被覆盖则清空。"""

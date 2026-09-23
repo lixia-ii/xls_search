@@ -3,6 +3,8 @@
 import tkinter as tk
 from tkinter import ttk
 
+import xls_search.theme as theme
+
 
 class CloseDialog(tk.Toplevel):
     """模态询问框。
@@ -17,21 +19,23 @@ class CloseDialog(tk.Toplevel):
         self.title("关闭 xls_search")
         self.resizable(False, False)
         self.transient(parent)
+        self.configure(bg=theme.BG)
 
         self.result = None
         self.remember = False
         self._remember_var = tk.BooleanVar(value=False)
 
         px = lambda n: int(round(n * scale))
-        ui_font = font or ("Microsoft YaHei UI", -int(round(13 * scale)))
+        ui_font = font or (theme.FAMILY, -int(round(15 * scale)))
 
         frame = ttk.Frame(self, padding=(px(22), px(20), px(22), px(16)))
         frame.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(frame, text="要退出程序，还是最小化到托盘？", font=ui_font).grid(
+        ttk.Label(frame, text="要退出程序，还是最小化到托盘？",
+                  font=ui_font).grid(
             row=0, column=0, columnspan=2, sticky="w")
         ttk.Label(frame, text="最小化后可在右下角托盘图标恢复窗口。",
-                  font=ui_font, foreground="#666666").grid(
+                  style="Hint.TLabel").grid(
             row=1, column=0, columnspan=2, sticky="w", pady=(px(6), px(16)))
 
         ttk.Checkbutton(frame, text="不再提示，以后都这样处理",
@@ -43,7 +47,7 @@ class CloseDialog(tk.Toplevel):
         ttk.Button(btns, text="最小化到托盘",
                    command=lambda: self._choose("tray")).pack(
             side=tk.LEFT, padx=(0, px(8)))
-        exit_btn = ttk.Button(btns, text="退出",
+        exit_btn = ttk.Button(btns, text="退出", style="Accent.TButton",
                               command=lambda: self._choose("exit"))
         exit_btn.pack(side=tk.LEFT)
 
@@ -54,16 +58,10 @@ class CloseDialog(tk.Toplevel):
         self.bind("<Escape>", lambda e: self._cancel())
         self.bind("<Return>", lambda e: self._choose("exit"))
 
-        self._center_on(parent)
+        theme.center_over(self, parent)
         self.grab_set()          # 放在最后，避免抢焦点时窗口还没定位好
         exit_btn.focus_set()
         self.wait_window(self)
-
-    def _center_on(self, parent):
-        self.update_idletasks()
-        x = parent.winfo_x() + (parent.winfo_width() - self.winfo_width()) // 2
-        y = parent.winfo_y() + (parent.winfo_height() - self.winfo_height()) // 2
-        self.geometry("+%d+%d" % (max(x, 0), max(y, 0)))
 
     def _choose(self, action):
         self.result = action

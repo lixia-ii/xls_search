@@ -7,6 +7,8 @@
 import tkinter as tk
 from tkinter import ttk
 
+import xls_search.theme as theme
+
 
 class KeywordPopup:
     """关键字输入框下方的历史下拉弹层。
@@ -19,11 +21,16 @@ class KeywordPopup:
     ui_font     : tuple               —— 列表字体
     on_pick     : callable            —— 用户选中某条关键字后的回调，接收 (keyword)
     is_busy     : callable            —— 返回 bool，当前是否有任务在跑
+    anchor      : widget|None         —— 弹层对齐的控件（默认就是 entry）；
+                                         entry 被外框包着时传外框，弹层才能
+                                         与可见边框左右对齐
     """
 
-    def __init__(self, root, entry, kw_var, ui_font, on_pick, is_busy):
+    def __init__(self, root, entry, kw_var, ui_font, on_pick, is_busy,
+                 anchor=None):
         self._root = root
         self._entry = entry
+        self._anchor = anchor if anchor is not None else entry
         self._kw_var = kw_var
         self._ui_font = ui_font
         self._on_pick = on_pick
@@ -42,6 +49,11 @@ class KeywordPopup:
         entry.bind("<Down>", self._nav)
         entry.bind("<Up>", self._nav)
         entry.bind("<Escape>", self._clear_focus)
+        # entry 外面包了边框 Frame 时，点在内边距上落到 Frame 而不是 entry，
+        # 这些位置也应视为"点了输入框"
+        if self._anchor is not entry:
+            for w in [self._anchor] + list(self._anchor.winfo_children()):
+                w.bind("<Button-1>", self._show_all_focus)
 
         # 窗口移动/大小变化时隐藏弹层
         root.bind("<Configure>", lambda e: self.hide(), add="+")
@@ -121,7 +133,7 @@ class KeywordPopup:
         except Exception:
             pass
         # 点击在输入框内 → 交给 entry 自己的 handler，不管
-        e = self._entry
+        e = self._anchor
         try:
             if (e.winfo_rootx() <= x_root <= e.winfo_rootx() + e.winfo_width() and
                     e.winfo_rooty() <= y_root <= e.winfo_rooty() + e.winfo_height()):
@@ -171,14 +183,19 @@ class KeywordPopup:
     def _build(self):
         pop = tk.Toplevel(self._root)
         pop.wm_overrideredirect(True)       # 无标题栏裸弹层
+        pop.configure(bg=theme.BORDER)      # 外层 1px 当边框
         # 弹层自身 bind <Button-1>，返回 "break" 阻止冒泡到 bind_all
         pop.bind("<Button-1>", self._on_popup_click)
-        lb = tk.Listbox(pop, activestyle="dotbox", font=self._ui_font,
-                        height=10, relief="solid", bd=1,
+        body = tk.Frame(pop, bg=theme.CARD, bd=0, highlightthickness=0)
+        body.pack(fill="both", expand=True, padx=1, pady=1)
+        lb = tk.Listbox(body, activestyle="none", font=self._ui_font,
+                        height=10, relief="flat", bd=0,
+                        bg=theme.CARD, fg=theme.TEXT,
                         highlightthickness=0, exportselection=False,
-                        selectbackground="#3399ff", selectforeground="#ffffff",
+                        selectbackground=theme.ACCENT_SOFT,
+                        selectforeground=theme.ACCENT,
                         selectmode="single")
-        sb = ttk.Scrollbar(pop, orient="vertical", command=lb.yview)
+        sb = ttk.Scrollbar(body, orient="vertical", command=lb.yview)
         lb.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         lb.pack(side="left", fill="both", expand=True)
@@ -202,11 +219,11 @@ class KeywordPopup:
             return
         if self._pop is None:
             self._build()
-        e = self._entry
+        a = self._anchor
         self._pop.update_idletasks()
-        x = e.winfo_rootx()
-        y = e.winfo_rooty() + e.winfo_height()
-        w = e.winfo_width()
+        x = a.winfo_rootx()
+        y = a.winfo_rooty() + a.winfo_height()
+        w = a.winfo_width()
         lb = self._listbox
         lb.delete(0, "end")
         for m in matches:
@@ -229,6 +246,12 @@ class KeywordPopup:
             self._entry.icursor("end")
         else:
             self._show(filter_text=False)
+
+    def _show_all_focus(self, event=None):
+        """点在边框 Frame 的内边距上：把焦点送进 entry，再照常处理。"""
+        self._entry.focus_set()
+        self._entry.icursor("end")
+        return self._show_all(event)
 
     def _nav(self, event):
         if self._pop is None or not self._pop.winfo_ismapped():
