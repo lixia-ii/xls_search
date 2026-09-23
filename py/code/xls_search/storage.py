@@ -32,6 +32,7 @@ DEFAULT_SETTINGS = {
         "col": 105,
     },
     "page_size": 100,
+    "close_action": "ask",   # 关闭窗口时的行为：ask/exit/tray
 }
 
 

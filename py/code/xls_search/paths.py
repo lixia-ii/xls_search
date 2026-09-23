@@ -23,6 +23,7 @@ import sys
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))      # .../py/code/xls_search
 CODE_DIR   = os.path.dirname(SCRIPT_DIR)                     # .../py/code
 DATA_DIR   = os.path.dirname(CODE_DIR)                       # .../py
+ASSETS_DIR = os.path.join(SCRIPT_DIR, "assets")               # 图标等静态资源
 
 
 def ensure_utf8_stdout():

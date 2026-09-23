@@ -17,14 +17,16 @@ from tkinter import ttk, filedialog, messagebox
 import xls_search.excel_actions as excel_actions
 import xls_search.ime as ime
 import xls_search.search_excel as search_excel
-from xls_search.paths import col_letter, col_name_to_num
+from xls_search.paths import col_letter, col_name_to_num, ASSETS_DIR
 from xls_search.storage import (load_settings, save_settings,
                                 load_keywords, save_keyword,
                                 load_sources, save_sources)
 
+from xls_search.close_dialog import CloseDialog
 from xls_search.keyword_popup import KeywordPopup
 from xls_search.search_controller import SearchController
 from xls_search.table_widget import ResultTable
+from xls_search.tray import TrayIcon
 
 
 class App:
@@ -43,12 +45,16 @@ class App:
         self._index_dirty = False       # sync probe 检测到索引过期
         self._stale_dismissed = False   # 本次会话用户已选「否跳过」，不再弹提示
 
+        close_action = self.settings.get("close_action", "ask")
+        self._close_action = close_action if close_action in ("ask", "exit", "tray") else "ask"
+
         self._controller = SearchController(self.q, self.cancel_event)
 
         self._build_ui()
         self._refresh_sources()
         self.root.after(80, self._poll_queue)
         self.root.after(1500, self._check_sync)   # 定时比对目录/索引文件数
+        self._init_tray()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ================================================================== #
@@ -621,6 +627,50 @@ class App:
         self.root.after(5000, self._check_sync)
 
     # ================================================================== #
+    #  系统托盘                                                           #
+    # ================================================================== #
+
+    def _init_tray(self):
+        ico_path = os.path.join(ASSETS_DIR, "app.ico")
+        self._tray = TrayIcon(ico_path, "xls_search",
+                              on_show=self._restore_from_tray,
+                              on_quit=self._quit_from_tray)
+        if not self._tray.ok:
+            return  # 没有 pywin32 等情况下保持原生关闭即退出行为
+
+        # 图标在程序启动时就挂上，整个运行期间常驻，不随窗口显隐增删。
+        self._tray.show()
+
+        # Tk 没有"最小化"事件，只能监听 <Unmap>：窗口被最小化时会触发，
+        # 此时 state() 是 "iconic"。注意子控件也会冒泡 Unmap，需按 widget 过滤。
+        self.root.bind("<Unmap>", self._on_unmap)
+        self._pump_tray()
+
+    def _pump_tray(self):
+        """在 Tk 主循环里抽取托盘消息，避免另起线程碰 Tk 控件。"""
+        self._tray.pump()
+        self._tray_job = self.root.after(100, self._pump_tray)
+
+    def _on_unmap(self, event):
+        if event.widget is not self.root:
+            return
+        if self.root.state() == "iconic":
+            self._minimize_to_tray()
+
+    def _restore_from_tray(self):
+        """点托盘图标唤出窗口。图标常驻，这里只管窗口，不动托盘。"""
+        self.root.deiconify()
+        self.root.state("normal")
+        self.root.lift()
+        self.root.focus_force()
+
+    def _quit_from_tray(self):
+        self._shutdown()
+
+    def _minimize_to_tray(self):
+        self.root.withdraw()          # 从任务栏移除，托盘图标本来就在
+
+    # ================================================================== #
     #  状态管理                                                           #
     # ================================================================== #
 
@@ -639,7 +689,29 @@ class App:
             self.status_var.set("正在取消…")
 
     def _on_close(self):
-        """关闭窗口。停止所有后台活动后退出。"""
+        """点 × 时：托盘不可用直接退出；否则按记忆的选择，或弹窗询问退出/最小化。"""
+        if not getattr(self, "_tray", None) or not self._tray.ok:
+            self._shutdown()
+            return
+
+        action = self._close_action
+        if action == "ask":
+            dlg = CloseDialog(self.root, scale=self.scale, font=self.ui_font)
+            if dlg.result is None:
+                return                      # 用户取消，什么都不做
+            action = dlg.result
+            if dlg.remember:
+                self._close_action = action
+                self.settings["close_action"] = action
+                save_settings(self.settings)
+
+        if action == "tray":
+            self._minimize_to_tray()
+        else:
+            self._shutdown()
+
+    def _shutdown(self):
+        """停止所有后台活动、注销托盘图标后退出。"""
         # 停掉所有 after 回调，避免关闭过程中他们再启动新任务
         try:
             for after_id in self.root.tk.call("after", "info"):
@@ -650,6 +722,8 @@ class App:
         self.cancel_event.set()
         # 清空结果表，释放大量 widget（避免 destroy 逐个回收卡顿）
         self.table.clear()
+        if getattr(self, "_tray", None):
+            self._tray.destroy()
         # 有建索引任务在跑时用 os._exit 直接退出
         if self.busy:
             try:
